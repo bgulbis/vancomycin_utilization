@@ -1,0 +1,146 @@
+---
+title: "Vancomycin Utilization Analysis"
+author: "Brian Gulbis"
+date: '`r format(Sys.Date(), "%B %d, %Y")`'
+output:
+  tufte::tufte_handout:
+    latex_engine: pdflatex
+    keep_tex: true
+  tufte::tufte_html: default
+subtitle: An implementation in R Markdown
+link-citations: yes
+---
+
+```{r setup, include=FALSE}
+library(tufte)
+# invalidate cache when the tufte version changes
+knitr::opts_chunk$set(tidy = FALSE, cache.extra = packageVersion('tufte'), echo = FALSE, message = FALSE, warning = FALSE)
+options(htmltools.dir.version = FALSE)
+```
+
+```{r}
+library(tidyverse)
+library(stringr)
+library(lubridate)
+library(forcats)
+library(themebg)
+
+orders <- read_rds("../data/tidy/orders.Rds") %>%
+    filter(!is.na(order.datetime),
+           order.datetime >= mdy("3/5/2017", tz = "US/Central"),
+           order.datetime <= mdy("4/30/2017", tz = "US/Central")) %>%
+    mutate(order_day = floor_date(order.datetime, "day"),
+           order_week = floor_date(order.datetime, "week"),
+           order_day_week = wday(order.datetime, label = TRUE, abbr = TRUE),
+           level_day_week = wday(lab.datetime, label = TRUE, abbr = TRUE),
+           level_hour = hour(lab.datetime))
+
+consults <- read_rds("../data/tidy/consults.Rds") %>%
+    filter(action.type == "Complete",
+           action.datetime >= mdy("3/5/2017", tz = "US/Central"),
+           action.datetime <= mdy("4/30/2017", tz = "US/Central")) %>%
+    mutate(action_day = floor_date(action.datetime, "day"),
+           action_week = floor_date(action.datetime, "week"),
+           action_day_week = wday(action.datetime, label = TRUE, abbr = FALSE),
+           action_hour = hour(action.datetime)) %>%
+    distinct(millennium.id, order.location, action_day, .keep_all = TRUE)
+```
+
+# Vancomycin Dosing Service Utilization
+
+```{r}
+all <- orders %>%
+    filter(!is.na(lab.datetime)) %>%
+    count(order_day) %>%
+    rename(patients = n)
+
+curr <- consults %>%
+    count(action_day) %>%
+    rename(consults = n)
+```
+
+There are currently between `r round(quantile(all$patients, 0.25), 0)` and `r round(quantile(all$patients, 0.75), 0)` patients each day who have a vancomycin level in the adult hospital. Of these, between `r round(quantile(curr$consults, 0.25), 0)` and `r round(quantile(curr$consults, 0.75), 0)` are followed by the Pharmacy Vancomycin Dosing Service. 
+
+```{r, fig.cap="Comparison of the current number of daily vancomycin consults with the total number of daily vancomycin patients during March and April 2017"}
+all %>%
+    left_join(curr, by = c("order_day" = "action_day")) %>%
+    gather(key, n, patients, consults) %>%
+    # dmap_at("key", fct_inorder) %>%
+    ggplot(aes(x = key, y = n)) +
+    geom_boxplot(width = 0.25) +
+    scale_x_discrete("", labels = c("Current Consults", "All Vancomycin Patients")) + 
+    ylab("Number of Patients") +
+    theme_bg(xticks = FALSE, base_family = "serif")
+```
+
+If all patients in the adult hospital were followed by the Pharmacy Vancomycin Dosing Service, this would result in an approximately `r round((median(all$patients) - median(curr$consults)) / median(curr$consults) * 100, 0)`% increase in service volume (see Figure 1).
+
+# Service Utilization by Hospital Unit
+
+Expansion of the Vancomycin Pharmacy Dosing Service to all patients would have the largest impact on the ICU's, as the dosing service is currently being utilized primarily in non-ICU areas (see Figure 2 for the locations which would be most affected).  
+
+Patients in the ICU's are currently followed by a clinical-pharmacist specialist, but are not usually managed through the vancomycin dosing protocol.
+
+```{r, fig.height=8, fig.width=8, fig.cap="Comparison of the total number of vancomycin patients and the current number of consult patients in each hospital unit", fig.fullwidth=TRUE}
+all_pts <- orders %>%
+    filter(!is.na(lab.datetime),
+           !is.na(order.unit)) %>%
+    distinct(pie.id, order.unit, order_week) %>%
+    count(order.unit, order_week) %>%
+    summarize_at("n", mean, na.rm = TRUE) %>%
+    rename(patients = n)
+
+cons_pts <- consults %>%
+    distinct(millennium.id, order.location, action_week) %>%
+    count(order.location, action_week) %>%
+    summarize_at("n", mean, na.rm = TRUE) %>%
+    rename(consults = n)
+
+all_pts %>%
+    left_join(cons_pts, by = c("order.unit" = "order.location")) %>%
+    mutate(patients = patients - consults) %>%
+    dmap_at("patients", ~ if_else(.x < 0, 0, .x)) %>%
+    mutate(total = patients + consults) %>%
+    arrange(total) %>%
+    filter(total > 0) %>%
+    dmap_at("order.unit", fct_inorder) %>%
+    gather(key, n, patients, consults) %>%
+    dmap_at("key", factor) %>%
+    dmap_at("key", fct_rev) %>%
+    ggplot(aes(x = order.unit, y = n, fill = key)) +
+    geom_bar(stat = "identity") +
+    xlab("Hospital Unit") +
+    ylab("Number of Patients") +
+    scale_fill_manual("", values = c("#377eb8", "#4daf4a"), labels = c("Traditional Patients", "Current Consults")) +
+    coord_flip() +
+    theme_bg(base_family = "serif") +
+    theme(legend.position = "bottom")
+```
+
+# Vancomycin Workload by Various Time Points
+
+Vancomycin levels are ordered consistently every day of the week and throughout the day. This means that an expansion of the Vancomycin Dosing Service would have an impact on the workload of staff on all days of the week and all throughout the day (see Figure 3 and Figure 4).
+
+```{r, fig.cap="Mean number of level results by day of week"}
+orders %>%
+    filter(!is.na(level_day_week)) %>%
+    count(level_day_week, order_week) %>%
+    summarize_at("n", mean, na.rm = TRUE) %>%
+    ggplot(aes(x = level_day_week, y = n)) +
+    geom_bar(stat = "identity") +
+    xlab("Day of Week") +
+    ylab("Number of Levels") +
+    theme_bg(base_family = "serif", xticks = FALSE)
+```
+
+```{r, fig.cap="Mean number of level results by hour of day"}
+orders %>%
+    filter(!is.na(level_hour)) %>%
+    count(level_hour, order_week) %>%
+    summarize_at("n", mean, na.rm = TRUE) %>%
+    ggplot(aes(x = level_hour, y = n)) +
+    geom_bar(stat = "identity") +
+    scale_x_continuous("Hour of Day", breaks = seq(0, 24, 6)) +
+    ylab("Number of Levels") +
+    theme_bg(base_family = "serif")
+```

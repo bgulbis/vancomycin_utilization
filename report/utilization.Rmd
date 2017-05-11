@@ -1,0 +1,240 @@
+---
+title: "Vancomycin Level Utilization"
+author: "Brian Gulbis"
+date: '`r format(Sys.Date(), "%B %d, %Y")`'
+output: 
+  html_document:
+    code_folding: hide
+    fig_caption: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, message=FALSE}
+library(tidyverse)
+library(stringr)
+library(lubridate)
+library(forcats)
+library(themebg)
+
+orders <- read_rds("../data/tidy/orders.Rds") %>%
+    filter(!is.na(order.datetime),
+           order.datetime >= mdy("3/5/2017", tz = "US/Central"),
+           order.datetime <= mdy("4/30/2017", tz = "US/Central")) %>%
+    mutate(order_day = floor_date(order.datetime, "day"),
+           order_week = floor_date(order.datetime, "week"),
+           order_day_week = wday(order.datetime, label = TRUE, abbr = FALSE),
+           level_day_week = wday(lab.datetime, label = TRUE, abbr = FALSE),
+           level_hour = hour(lab.datetime))
+
+consults <- read_rds("../data/tidy/consults.Rds") %>%
+    filter(action.type == "Complete",
+           action.datetime >= mdy("3/5/2017", tz = "US/Central"),
+           action.datetime <= mdy("4/30/2017", tz = "US/Central")) %>%
+    mutate(action_day = floor_date(action.datetime, "day"),
+           action_week = floor_date(action.datetime, "week"),
+           action_day_week = wday(action.datetime, label = TRUE, abbr = FALSE),
+           action_hour = hour(action.datetime)) %>%
+    distinct(millennium.id, order.location, action_day, .keep_all = TRUE)
+```
+
+```{r, fig.cap="Total number of vancomycin levels ordered per week during March and April 2017"}
+orders %>%
+    filter(!str_detect(order, "Request")) %>%
+    count(order_week) %>%
+    ggplot(aes(x = order_week, y = n)) +
+    geom_line() +
+    coord_cartesian(ylim = c(0, 500)) +
+    theme_bg()
+```
+
+```{r, fig.cap="Total number of vancomycin levels ordered per day during March and April 2017"}
+orders %>%
+    filter(!str_detect(order, "Request")) %>%
+    count(order_day) %>%
+    ggplot(aes(x = order_day, y = n)) +
+    geom_line() +
+    coord_cartesian(ylim = c(0, 100)) +
+    theme_bg()
+```
+
+```{r, fig.cap="Total number of level results returned per week during March and April 2017"}
+orders %>%
+    filter(!is.na(lab.datetime)) %>%
+    count(order_week) %>%
+    ggplot(aes(x = order_week, y = n)) +
+    geom_line() +
+    coord_cartesian(ylim = c(0, 300)) +
+    theme_bg()
+```
+
+```{r, fig.cap="Total number of level results returned per day during March and April 2017"}
+orders %>%
+    filter(!is.na(lab.datetime)) %>%
+    count(order_day) %>%
+    ggplot(aes(x = order_day, y = n)) +
+    geom_line() +
+    coord_cartesian(ylim = c(0, 75)) +
+    theme_bg()
+```
+
+```{r, fig.cap="Comparison of the current number of daily vancomycin consults with the total number of daily vancomycin patients during March and April 2017"}
+all <- orders %>%
+    filter(!is.na(lab.datetime)) %>%
+    count(order_day) %>%
+    rename(patients = n)
+
+curr <- consults %>%
+    count(action_day) %>%
+    rename(consults = n)
+
+all %>%
+    left_join(curr, by = c("order_day" = "action_day")) %>%
+    gather(key, n, patients, consults) %>%
+    # dmap_at("key", fct_inorder) %>%
+    ggplot(aes(x = key, y = n)) +
+    geom_boxplot(width = 0.25) +
+    scale_x_discrete("", labels = c("Current Consults", "All Vancomycin Patients")) + 
+    theme_bg(xticks = FALSE)
+```
+
+```{r, fig.cap="Comparison of the total number of patients with at least one vancomycin level and the number of patients with a consult by week during March and April 2017"}
+pts <- orders %>%
+    filter(!is.na(lab.datetime)) %>%
+    distinct(pie.id, order_week) %>%
+    count(order_week) %>%
+    rename(patients = n)
+
+cons <- consults %>%
+    distinct(millennium.id, action_week) %>%
+    count(action_week) %>%
+    rename(consults = n)
+
+pts %>%
+    left_join(cons, by = c("order_week" = "action_week")) %>%
+    gather(key, n, patients, consults) %>%
+    dmap_at("key", fct_inorder) %>%
+    ggplot(aes(x = order_week, y = n, color = key)) +
+    geom_line() +
+    scale_color_manual("", values = c("#377eb8", "#4daf4a"), labels = c("Vancomycin Patients", "Consult Patients")) +
+    coord_cartesian(ylim = c(0, 200)) +
+    theme_bg()
+```
+
+```{r}
+pts %>%
+    left_join(cons, by = c("order_week" = "action_week")) %>%
+    mutate(patients = patients - consults) %>%
+    gather(key, n, patients, consults) %>%
+    dmap_at("key", fct_inorder) %>%
+    ggplot(aes(x = order_week, y = n, fill = key)) +
+    geom_bar(stat = "identity") +
+    scale_fill_manual("", values = c("#377eb8", "#4daf4a"), labels = c("Additional Coverage Needed", "Current Consults")) +
+    theme_bg()
+```
+
+
+```{r, fig.cap="Mean number of level results per hospital unit per week during March and April 2017"}
+orders %>%
+    filter(!is.na(lab.datetime),
+           !is.na(order.unit)) %>%
+    count(order.unit, order_week) %>%
+    summarize_at("n", mean, na.rm = TRUE) %>%
+    arrange(n) %>%
+    dmap_at("order.unit", fct_inorder) %>%
+    ggplot(aes(x = order.unit, y = n)) +
+    geom_bar(stat = "identity") +
+    coord_flip() +
+    theme_bg()
+```
+
+```{r, fig.cap="Mean number of patients with at least one vancomcyin level per hospital unit per week during March and April 2017"}
+orders %>%
+    filter(!is.na(lab.datetime),
+           !is.na(order.unit)) %>%
+    distinct(pie.id, order.unit, order_week) %>%
+    count(order.unit, order_week) %>%
+    summarize_at("n", mean, na.rm = TRUE) %>%
+    arrange(n) %>%
+    dmap_at("order.unit", fct_inorder) %>%
+    ggplot(aes(x = order.unit, y = n)) +
+    geom_bar(stat = "identity") +
+    coord_flip() +
+    theme_bg()
+```
+
+```{r}
+weekly <- orders %>%
+    filter(!is.na(lab.datetime),
+           !is.na(order.unit)) %>%
+    count(order.unit, order_week) %>%
+    rename(levels = n)
+
+cons_weekly <- consults %>%
+    filter(!is.na(order.location)) %>%
+    count(order.location, action_week) %>%
+    rename(consults = n)
+
+weekly %>%
+    left_join(cons_weekly, by = c("order.unit" = "order.location", "order_week" = "action_week")) %>%
+    # mutate(levels = levels - consults) %>%
+    gather(key, n, levels, consults) %>%
+    dmap_at("n", ~coalesce(.x, as.integer(0))) %>%
+    group_by(order.unit, key) %>%
+    summarize_at("n", mean, na.rm = TRUE) %>%
+    # arrange(n) %>%
+    dmap_at("order.unit", fct_inorder) %>%
+    ggplot(aes(x = order.unit, y = n, fill = key)) +
+    geom_bar(stat = "identity") +
+    coord_flip() +
+    theme_bg()
+```
+
+
+```{r, fig.cap="Mean number of level results by day of week during March and April 2017"}
+orders %>%
+    filter(!is.na(level_day_week)) %>%
+    count(level_day_week, order_week) %>%
+    summarize_at("n", mean, na.rm = TRUE) %>%
+    ggplot(aes(x = level_day_week, y = n)) +
+    geom_bar(stat = "identity") +
+    theme_bg()
+```
+
+```{r, fig.cap="Mean number of level results by hour of day during March and April 2017"}
+orders %>%
+    filter(!is.na(level_hour)) %>%
+    count(level_hour, order_week) %>%
+    summarize_at("n", mean, na.rm = TRUE) %>%
+    ggplot(aes(x = level_hour, y = n)) +
+    geom_bar(stat = "identity") +
+    theme_bg()
+```
+
+```{r, fig.cap="Mean number of consults per hospital unit per week during March and April 2017"}
+consults %>%
+    count(order.location, action_week) %>%
+    summarize_at("n", mean, na.rm = TRUE) %>%
+    arrange(n) %>%
+    dmap_at("order.location", fct_inorder) %>%
+    ggplot(aes(x = order.location, y = n)) +
+    geom_bar(stat = "identity") +
+    coord_flip() +
+    theme_bg()
+```
+
+```{r, fig.cap="Mean number of patients with a vancomycin consult per hospital unit per week during March and April 2017"}
+consults %>%
+    distinct(millennium.id, order.location, action_week) %>%
+    count(order.location, action_week) %>%
+    summarize_at("n", mean, na.rm = TRUE) %>%
+    arrange(n) %>%
+    dmap_at("order.location", fct_inorder) %>%
+    ggplot(aes(x = order.location, y = n)) +
+    geom_bar(stat = "identity") +
+    coord_flip() +
+    theme_bg()
+```
+
