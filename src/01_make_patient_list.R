@@ -11,7 +11,10 @@
 library(tidyverse)
 library(edwr)
 
-pts <- read_data("data/raw", "patients", FALSE) %>%
+dir_raw <- "data/raw/q4_update"
+dirr::gzip_files(dir_raw)
+
+pts <- read_data(dir_raw, "patients", FALSE) %>%
     as.patients() %>%
     arrange(millennium.id)
 
@@ -19,16 +22,14 @@ id <- concat_encounters(pts$millennium.id)
 
 # use results to run MBO queries:
 #   * Orders
-#       - Mnemonic (Primary Generic) FILTER ON: Vancomycin Level; Vancomycin
-#       Level Trough; Vancomycin Level Trough Request; Vancomycin Level Request;
-#       Vancomycin Level Peak; Vancomycin Level Peak Request
+#       - Mnemonic (Primary Generic) FILTER ON: Vancomycin Level;Vancomycin Level Trough;Vancomycin Level Trough Request;Vancomycin Level Request;Vancomycin Level Peak;Vancomycin Level Peak Request
 #   * Labs - Vancomycin
 
 # run EDW query:
 #   * Identifiers
 #       - Millennium Encounter ID
 
-identifiers <- read_data("data/raw", "identifiers") %>%
+identifiers <- read_data(dir_raw, "identifiers") %>%
     as.id()
 
 edw_id <- concat_encounters(identifiers$pie.id)
@@ -39,22 +40,22 @@ edw_id <- concat_encounters(identifiers$pie.id)
 #       Vancomycin Level Peak Request; Vancomycin Level Request; Vancomycin
 #       Level Trough; Vancomycin Level Trough Request
 #   * Clinical Events - Prompt
-#       - Clinical Event: 	Vanco Lvl; Vanco Pk; Vanco Tr
+#       - Clinical Event: 	Vanco Lvl;Vanco Pk;Vanco Tr
 
 
-timing <- read_data("data/raw", "^timing") %>%
-    as.order_timing()
+timing <- read_data(dir_raw, "^timing") %>%
+    as.order_timing(extras = list("pie.id" = "PowerInsight Encounter Id"))
 # filter(order.unit %in% hvi)
 
-vanc_levels <- read_data("data/raw", "labs-vanc-edw") %>%
-    as.labs(extras = list("order.id" = "`Clinical Event Order ID`",
-                          "event.unit" = "`Nurse Unit of Clinical Event`")) %>%
+vanc_levels <- read_data(dir_raw, "labs-vanc-edw") %>%
+    as.labs(extras = list("order.id" = "Clinical Event Order ID",
+                          "event.unit" = "Nurse Unit of Clinical Event")) %>%
     filter(!is.na(event.unit))
 
 orders <- full_join(timing, vanc_levels, by = c("pie.id", "order.id")) %>%
     arrange(pie.id, order.datetime, lab.datetime)
 
-consults <- read_data("data/raw", "order-actions", FALSE) %>%
+consults <- read_data(dir_raw, "order-actions", FALSE) %>%
     as.order_action()
 
 # orders <- bind_rows(timing["order.id"], vanc_levels["order.id"]) %>%
@@ -68,5 +69,5 @@ consults <- read_data("data/raw", "order-actions", FALSE) %>%
 
 # saveRDS(timing, "data/tidy/order_timing.Rds")
 # saveRDS(vanc_levels, "data/tidy/vanc_levels.Rds")
-write_rds(orders, "data/tidy/orders.Rds", "gz")
-write_rds(consults, "data/tidy/consults.Rds", "gz")
+write_rds(orders, "data/tidy/q4_update/orders.Rds", "gz")
+write_rds(consults, "data/tidy/q4_update/consults.Rds", "gz")
