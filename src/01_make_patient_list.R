@@ -1,73 +1,118 @@
-# make patient list
-
-# run MBO query:
-#   * Patients - by Order
-#       - Facility (Curr): HH HERMANN
-#       - Mnemonic (Primary Generic) FILTER ON: Vancomycin Level; Vancomycin
-#       Level Trough; Vancomycin Level Trough Request; Vancomycin Level Request;
-#       Vancomycin Level Peak; Vancomycin Level Peak Request
-#       - Building (Order): HH HVI;HH Cullen;HH Jones;HH Robertson;HH Hermann
-
 library(tidyverse)
+library(lubridate)
 library(edwr)
 
-dir_raw <- "data/raw/q4_update"
+# run MBO query:
+#   * Patients - by Medication (Generic)
+#       - Facility (Curr): HH HERMANN;HH Trans Care;HH Rehab;HH Clinics
+#       - Admit Date: 7/1/2017 - 1/1/2018
+#   * Scheduled Queries/consults_vancomycin
+#       - Date: 7/1/2017 - 1/1/2018
+
+dir_raw <- "data/raw/mue"
 dirr::gzip_files(dir_raw)
 
 pts <- read_data(dir_raw, "patients", FALSE) %>%
     as.patients() %>%
-    arrange(millennium.id)
+    filter(age >= 18)
 
-id <- concat_encounters(pts$millennium.id)
+mbo_id <- concat_encounters(pts$millennium.id)
 
-# use results to run MBO queries:
-#   * Orders
-#       - Mnemonic (Primary Generic) FILTER ON: Vancomycin Level;Vancomycin Level Trough;Vancomycin Level Trough Request;Vancomycin Level Request;Vancomycin Level Peak;Vancomycin Level Peak Request
+# run MBO query:
 #   * Labs - Vancomycin
 
-# run EDW query:
-#   * Identifiers
-#       - Millennium Encounter ID
+levels <- read_data(dir_raw, "labs-vanc", FALSE) %>%
+    as.labs()
 
-identifiers <- read_data(dir_raw, "identifiers") %>%
-    as.id()
+pts_levels <- semi_join(pts, levels, by = "millennium.id")
 
-edw_id <- concat_encounters(identifiers$pie.id)
+mbo_id <- concat_encounters(pts_levels$millennium.id)
 
-# run EDW queries:
-#   * Orders - Timing - Prompt without Review
-#       - Order Catalog Mnemonic: Vancomycin Level; Vancomycin Level Peak;
-#       Vancomycin Level Peak Request; Vancomycin Level Request; Vancomycin
-#       Level Trough; Vancomycin Level Trough Request
-#   * Clinical Events - Prompt
-#       - Clinical Event: 	Vanco Lvl;Vanco Pk;Vanco Tr
+# run MBO query:
+#   * Medications - Inpatient - Prompt
+#       * Medication (Generic): vancomycin
 
+icu_units <- c(
+    "HH CCU",
+    "HH CVICU",
+    "HH HFIC",
+    "HH MICU",
+    "HH STIC",
+    "HH 7J",
+    "HH NVIC",
+    "HH TSIC"
+)
 
-timing <- read_data(dir_raw, "^timing") %>%
-    as.order_timing(extras = list("pie.id" = "PowerInsight Encounter Id"))
-# filter(order.unit %in% hvi)
+imu_units <- c(
+    "HVI CIMU",
+    "HH CVIMU",
+    "HH HFIM",
+    "HH MIMU",
+    "HH SIMU",
+    "HH 3CIM",
+    "HH NIMU",
+    "HH STRK"
+)
 
-vanc_levels <- read_data(dir_raw, "labs-vanc-edw") %>%
-    as.labs(extras = list("order.id" = "Clinical Event Order ID",
-                          "event.unit" = "Nurse Unit of Clinical Event")) %>%
-    filter(!is.na(event.unit))
+floor_units <- c(
+    "HH 3JP",
+    "HH 3CP",
+    "HH 4WCP",
+    "HH ACE",
+    "HH 5ECP",
+    "HH 5JP",
+    "HH 5WCP",
+    "HH 6EJP",
+    "HH 6WJP",
+    "HH 8NJP",
+    "HH EMU",
+    "HH NEU",
+    "HH 8WJP",
+    "HH 9EJP",
+    "HH 9WJP",
+    "HH REHA",
+    "HH TCF"
+)
 
-orders <- full_join(timing, vanc_levels, by = c("pie.id", "order.id")) %>%
-    arrange(pie.id, order.datetime, lab.datetime)
+doses <- read_data(dir_raw, "meds-inpt", FALSE) %>%
+    as.meds_inpt() %>%
+    filter(med.dose > 0)
 
-consults <- read_data(dir_raw, "order-actions", FALSE) %>%
-    as.order_action()
+doses_icu <- doses %>%
+    filter(med.location %in% icu_units)
 
-# orders <- bind_rows(timing["order.id"], vanc_levels["order.id"]) %>%
-#     distinct()
-#
-# id <- concat_encounters(orders$order.id, 950)
+doses_floor <- anti_join(doses, doses_icu, by = "millennium.id")
 
-# run EDW queries:
-#   * Orders - Actions - Source Order ID Prompt
-#   * Orders - Details - Source Order ID Prompt
+doses_duration <- doses_floor %>%
+    calc_runtime(cont = FALSE) %>%
+    summarize_data(cont = FALSE)
 
-# saveRDS(timing, "data/tidy/order_timing.Rds")
-# saveRDS(vanc_levels, "data/tidy/vanc_levels.Rds")
-write_rds(orders, "data/tidy/q4_update/orders.Rds", "gz")
-write_rds(consults, "data/tidy/q4_update/consults.Rds", "gz")
+doses_5days <- doses_duration %>%
+    filter(duration >= 5 * 24)
+
+doses_3times <- doses %>%
+    add_count(millennium.id) %>%
+    filter(n >= 3) %>%
+    distinct(millennium.id)
+
+pts_doses <- pts_levels %>%
+    semi_join(doses_5days, by = "millennium.id") %>%
+    semi_join(doses_3times, by = "millennium.id")
+
+mbo_id <- concat_encounters(pts_doses$millennium.id)
+
+# run MBO query
+#   * Clinical Events - No Order Id - Prompt
+#       - Clinical Event: Creatinine Lvl;Hemodialysis Output Vol;Hemodialysis Output Volume
+
+consults <- read_data(dir_raw, "consults", FALSE) %>%
+    rename(millennium.id = `Encounter Identifier`,
+           order.datetime = `Date and Time - Order Start`,
+           order = `Mnemonic (Primary Generic) FILTER ON`,
+           order.location = `Nurse Unit (Order)`) %>%
+    format_dates("order.datetime")
+
+pts_consults <- semi_join(pts_doses, consults, by = "millennium.id")
+
+pts_traditional <- anti_join(pts_doses, pts_consults, by = "millennium.id")
+
