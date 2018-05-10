@@ -122,20 +122,15 @@ weight <- measures %>%
 events <- read_data(dir_raw, "events_", FALSE) %>%
     as.events(order_var = FALSE)
 
-renal_hd <- events %>%
-    filter(str_detect(event, "hemodialysis")) %>%
-    distinct(millennium.id) %>%
-    mutate(hd = TRUE)
+# pts_doses_hd <- pts_doses %>%
+#     left_join(renal_hd, by = "millennium.id") %>%
+#     mutate_at("hd", funs(coalesce(., FALSE)))
 
-pts_doses_hd <- pts_doses %>%
-    left_join(renal_hd, by = "millennium.id") %>%
-    mutate_at("hd", funs(coalesce(., FALSE)))
-
-pts_consults <- pts_doses_hd %>%
+pts_consults <- pts_doses %>%
     semi_join(consults, by = "millennium.id") %>%
     mutate(group = "consult")
 
-pts_traditional <- pts_doses_hd %>%
+pts_traditional <- pts_doses %>%
     anti_join(pts_consults, by = "millennium.id") %>%
     mutate(group = "traditional")
 
@@ -170,7 +165,7 @@ data_patients <- pts_consults %>%
         height,
         weight,
         length.stay,
-        hd,
+        # hd,
         millennium.id
     )
 
@@ -191,6 +186,62 @@ tmp_scr <- events %>%
     select(-(event.id:last)) %>%
     mutate_at("event.result", as.numeric) %>%
     filter(!is.na(event.result))
+
+# aki --------------------------------------------------
+# Increase in SCr by X0.3 mg/dl within 48 hours; or
+# Increase in SCr to X1.5 times baseline, within the prior 7 days
+
+renal_hd <- events %>%
+    left_join(vanc_duration, by = "millennium.id") %>%
+    filter(
+        str_detect(event, "hemodialysis"),
+        event.datetime >= first - days(3),
+        event.datetime <= last
+    ) %>%
+    distinct(millennium.id) %>%
+    mutate(hd = TRUE)
+
+tmp_aki <- tmp_scr %>%
+    anti_join(renal_hd, by = "millennium.id") %>%
+    left_join(vanc_duration, by = "millennium.id") %>%
+    filter(
+        event.datetime >= first - days(3),
+        event.datetime <= last
+    ) %>%
+    rename(
+        lab.datetime = event.datetime,
+        lab = event,
+        lab.result = event.result
+    ) %>%
+    lab_change("creatinine lvl", 0.3, min, back = 2)
+
+tmp_scr_baseline <- tmp_scr %>%
+    anti_join(renal_hd, by = "millennium.id") %>%
+    left_join(vanc_duration, by = "millennium.id") %>%
+    filter(event.datetime >= first - days(7)) %>%
+    arrange(millennium.id, event.datetime) %>%
+    distinct(millennium.id, .keep_all = TRUE) %>%
+    select(
+        millennium.id,
+        baseline.datetime = event.datetime,
+        baseline.scr = event.result
+    )
+
+tmp_aki_baseline <- tmp_scr %>%
+    anti_join(renal_hd, by = "millennium.id") %>%
+    left_join(vanc_duration, by = "millennium.id") %>%
+    left_join(tmp_scr_baseline, by = "millennium.id") %>%
+    filter(
+        event.datetime <= last,
+        event.result >= baseline.scr * 1.5
+    )
+
+pts_aki <- bind_rows(
+    distinct(tmp_aki, millennimu.id),
+    distinct(tmp_aki_baseline, millennium.id)
+) %>%
+    distinct(millennium.id) %>%
+    mutate(aki = TRUE)
 
 tmp_doses <- doses %>%
     semi_join(data_patients, by = "millennium.id") %>%
@@ -288,10 +339,16 @@ data_temp <- read_data(dir_raw, "vitals", FALSE) %>%
         event.location = vital.location
     )
 
-
 # export data ------------------------------------------
 
 data_patients %>%
+    left_join(pts_aki, by = "millennium.id") %>%
+    left_join(renal_hd, by = "millennium.id") %>%
+    mutate(renal = hd | aki) %>%
+    mutate_at(
+        c("renal", "aki", "hd"),
+        funs(coalesce(., FALSE))
+    ) %>%
     select(-millennium.id) %>%
     write.xlsx("data/external/patients.xlsx")
 
