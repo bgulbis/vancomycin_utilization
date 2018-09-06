@@ -1,0 +1,56 @@
+---
+title: "Vancomycin Consult Utilization"
+author: "Brian Gulbis"
+date: '`r format(Sys.Date(), "%B %d, %Y")`'
+output: 
+  html_document:
+    code_folding: hide
+    fig_caption: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, message=FALSE}
+library(tidyverse)
+library(lubridate)
+library(themebg)
+
+dir_raw <- "../data/raw/consults"
+
+consults <- read_data(dir_raw, "consults", FALSE) %>%
+    rename(
+        millennium.id = `Encounter Identifier`,
+        order.datetime = `Date and Time - Order Start`,
+        order = `Mnemonic (Primary Generic) FILTER ON`,
+        order.location = `Nurse Unit (Order)`
+    ) %>%
+    format_dates("order.datetime") %>%
+    filter(
+        order.datetime >= mdy("7/1/2017", tz = "US/Central"),
+        order.datetime < mdy("9/1/2018", tz = "US/Central")
+    ) %>%
+    mutate(order.day = floor_date(order.datetime, unit = "days")) %>%
+    distinct(millennium.id, order.day, .keep_all = TRUE)
+```
+
+```{r}
+consults %>%
+    count(order.day) %>%
+    ggplot(aes(x = order.day, y = n)) +
+    geom_line() +
+    geom_smooth() +
+    theme_bg()
+```
+
+```{r, fig.height=7}
+consults %>%
+    mutate(order.month = floor_date(order.datetime, unit = "month")) %>%
+    count(order.month, order.location) %>%
+    ggplot(aes(x = order.month, y = order.location, fill = n)) +
+    geom_tile() +
+    # scale_fill_brewer(palette = "GnBu") +
+    theme_bg()
+```
+
