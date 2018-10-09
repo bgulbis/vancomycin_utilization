@@ -3,6 +3,9 @@ library(lubridate)
 library(edwr)
 library(openxlsx)
 
+# run MBO query
+#   * Scheduled Queries/consults_vancomycin
+
 dir_raw <- "data/raw/consults"
 
 consults <- read_data(dir_raw, "consults", FALSE) %>%
@@ -15,7 +18,7 @@ consults <- read_data(dir_raw, "consults", FALSE) %>%
     format_dates("order.datetime") %>%
     filter(
         order.datetime >= mdy("7/1/2017", tz = "US/Central"),
-        order.datetime < mdy("9/1/2018", tz = "US/Central")
+        order.datetime < mdy("10/1/2018", tz = "US/Central")
     ) %>%
     mutate(order.day = floor_date(order.datetime, unit = "days")) %>%
     distinct(millennium.id, order.day, .keep_all = TRUE)
