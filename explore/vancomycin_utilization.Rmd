@@ -15,7 +15,9 @@ knitr::opts_chunk$set(echo = TRUE)
 ```{r, message=FALSE}
 library(tidyverse)
 library(lubridate)
+library(edwr)
 library(themebg)
+library(plotly)
 
 dir_raw <- "../data/raw/consults"
 
@@ -44,6 +46,23 @@ consults %>%
     theme_bg()
 ```
 
+```{r}
+consults %>%
+    count(order.day) %>%
+    plot_ly() %>%
+    add_lines(x = ~order.day, y = ~n)
+
+```
+
+```{r}
+consults %>%
+    mutate(order.week = floor_date(order.datetime, unit = "week")) %>%
+    count(order.week) %>%
+    plot_ly() %>%
+    add_lines(x = ~order.week, y = ~n)
+
+```
+
 ```{r, fig.height=7}
 consults %>%
     mutate(order.month = floor_date(order.datetime, unit = "month")) %>%
@@ -52,5 +71,14 @@ consults %>%
     geom_tile() +
     # scale_fill_brewer(palette = "GnBu") +
     theme_bg()
+```
+
+```{r}
+consults %>%
+    mutate(order.month = floor_date(order.datetime, unit = "month")) %>%
+    count(order.month, order.location) %>%
+    plot_ly() %>%
+    add_heatmap(x = ~order.month, y = ~order.location, z = ~n)
+
 ```
 
