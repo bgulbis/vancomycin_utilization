@@ -20,7 +20,7 @@ consults <- read_data(dir_raw, "consults", FALSE) %>%
     format_dates("order.datetime") %>%
     filter(
         order.datetime >= mdy("7/1/2017", tz = "US/Central"),
-        order.datetime < mdy("12/1/2018", tz = "US/Central")
+        order.datetime < mdy("1/1/2019", tz = "US/Central")
     ) %>%
     mutate(order.day = floor_date(order.datetime, unit = "days")) %>%
     distinct(millennium.id, order.day, .keep_all = TRUE)
@@ -37,5 +37,5 @@ monthly <- consults %>%
 
 write.xlsx(
     monthly,
-    "/home/brian/Public/W_Pharmacy/Dosing Services/vancomycin_utilization.xlsx"
+    "/mnt/hgfs/W_Pharmacy/Dosing Services/vancomycin_utilization.xlsx"
 )
